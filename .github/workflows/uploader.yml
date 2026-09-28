@@ -1,9 +1,7 @@
 name: Automated Video Processor & YouTube Uploader
 
 on:
-  schedule:
-    - cron: '0 */3 * * *' # Har 3 ghante baad chalega
-  workflow_dispatch:       # Manual Run button ke liye
+  workflow_dispatch:       # अब सिर्फ बाहरी अलार्म (cron-job.org) ही इसे चलाएगा
 
 jobs:
   upload:
