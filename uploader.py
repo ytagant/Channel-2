@@ -124,17 +124,33 @@ def get_youtube_service():
 
     creds_yt = Credentials(
         token=token_data.get('token'), refresh_token=token_data.get('refresh_token'),
-        token_uri=client_info['token_uri'], client_id=client_info['client_id'],
+        token_uri=client_info.get('token_uri', 'https://oauth2.googleapis.com/token'), 
+        client_id=client_info['client_id'],
         client_secret=client_info['client_secret'], scopes=token_data.get('scopes')
     )
     
-    for attempt in range(4):
-        try:
-            creds_yt.refresh(Request())
-            return build('youtube', 'v3', credentials=creds_yt)
-        except Exception as e:
-            if attempt == 3: raise e
-            time.sleep(10)
+    # 🌟 نیا آٹو ٹوکن ریفریش سسٹم
+    if not creds_yt.valid:
+        if creds_yt.expired and creds_yt.refresh_token:
+            for attempt in range(4):
+                try:
+                    creds_yt.refresh(Request())
+                    print("🔄 یوٹیوب کا ٹوکن ایکسپائر ہو گیا تھا، نیا ٹوکن جنریٹ کر لیا گیا ہے!")
+                    
+                    # نئے ٹوکن کو لوکل فائل میں محفوظ کریں
+                    token_data['token'] = creds_yt.token
+                    with open('token.json', 'w') as f: json.dump(token_data, f)
+                    
+                    # ڈرائیو پر نیا ٹوکن اپڈیٹ کریں تاکہ اگلی بار مسئلہ نہ ہو
+                    media = MediaFileUpload('token.json', mimetype='application/json')
+                    drive_service.files().update(fileId=tk_id, media_body=media).execute()
+                    print("✅ نیا ٹوکن ڈرائیو پر اپڈیٹ کر دیا گیا ہے!")
+                    break
+                except Exception as e:
+                    if attempt == 3: raise e
+                    time.sleep(10)
+                    
+    return build('youtube', 'v3', credentials=creds_yt)
 
 def get_strict_asian_proxies():
     print("🔍 انٹرنیٹ سے صرف اعلیٰ کوالٹی کی ایشین پراکسیز (پاکستان، انڈیا، یو اے ای، بنگلہ دیش) تلاش کی جا رہی ہیں...")
@@ -211,7 +227,6 @@ def main():
     
     edit_anti_copyright_full_video('raw_video.mp4', 'edited_video.mp4')
 
-    # ٹائٹل اور ٹیگز رینڈمائزیشن
     final_title = f"{item['title']} \u200B"
     tags_list = item.get('tags', [])
     if tags_list:
@@ -258,9 +273,8 @@ def main():
         }
     }
 
-    # ================== ماسٹر ری ٹرائی اور کیو پروٹیکشن سسٹم ==================
     upload_success = False
-    max_master_retries = 5  # 5 دفعہ نئی پراکسیز تلاش کرے گا
+    max_master_retries = 5  
     
     for master_attempt in range(max_master_retries):
         if upload_success:
@@ -336,18 +350,19 @@ def main():
             os.environ.pop('https_proxy', None)
             time.sleep(30)
 
-    # اگر 5 راؤنڈز کے بعد بھی اپلوڈ ناکام ہو جائے، تو ویڈیو کو بچانے کے لیے واپس Queue میں ڈال دیں
+    # 🌟 نیا پراکسی ٹائم آؤٹ فکس (ڈپلیکیٹ اپلوڈ کو روکنے کے لیے)
     if not upload_success:
-        print("\n❌ تمام کوششوں کے باوجود اپلوڈ ناکام رہا۔ ویڈیو کو محفوظ رکھنے کے لیے واپس کیو (Queue) میں ڈالا جا رہا ہے۔")
-        queue.insert(0, item)
-        with open('queue.json', 'w', encoding='utf-8') as f: json.dump(queue, f, indent=4)
-        for attempt in range(4):
-            try:
-                drive_service.files().update(fileId=queue_file_id, media_body=MediaFileUpload('queue.json')).execute()
-                break
-            except Exception:
-                time.sleep(10)
-    # =======================================================================
+        print("\n⚠️️ پراکسی کا کنکشن ڈراپ ہو گیا ہے۔ ڈپلیکیٹ اپلوڈ سے بچنے کے لیے ہم اسے دوبارہ Queue میں نہیں ڈالیں گے!")
+        if item['filename'] not in history:
+            history.append(item['filename'])
+            with open('processed_history.json', 'w', encoding='utf-8') as f: 
+                json.dump(history, f, indent=4)
+            mh = MediaFileUpload('processed_history.json')
+            if history_file_id: 
+                drive_service.files().update(fileId=history_file_id, media_body=mh).execute()
+            else:
+                drive_service.files().create(body={'name':'processed_history.json','parents':[DRIVE_FOLDER_ID]}, media_body=mh).execute()
+        delete_from_drive(video_id)
 
     os.environ.pop('http_proxy', None)
     os.environ.pop('https_proxy', None)
@@ -357,4 +372,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-                
+                                         
