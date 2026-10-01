@@ -129,7 +129,7 @@ def get_youtube_service():
         client_secret=client_info['client_secret'], scopes=token_data.get('scopes')
     )
     
-    # 🌟 نیا آٹو ٹوکن ریفریش سسٹم
+    # آٹو ٹوکن ریفریش سسٹم
     if not creds_yt.valid:
         if creds_yt.expired and creds_yt.refresh_token:
             for attempt in range(4):
@@ -137,11 +137,9 @@ def get_youtube_service():
                     creds_yt.refresh(Request())
                     print("🔄 یوٹیوب کا ٹوکن ایکسپائر ہو گیا تھا، نیا ٹوکن جنریٹ کر لیا گیا ہے!")
                     
-                    # نئے ٹوکن کو لوکل فائل میں محفوظ کریں
                     token_data['token'] = creds_yt.token
                     with open('token.json', 'w') as f: json.dump(token_data, f)
                     
-                    # ڈرائیو پر نیا ٹوکن اپڈیٹ کریں تاکہ اگلی بار مسئلہ نہ ہو
                     media = MediaFileUpload('token.json', mimetype='application/json')
                     drive_service.files().update(fileId=tk_id, media_body=media).execute()
                     print("✅ نیا ٹوکن ڈرائیو پر اپڈیٹ کر دیا گیا ہے!")
@@ -334,7 +332,40 @@ def main():
                         upload_success = True
                         break
                     except Exception as e:
-                        print(f"⚠️ اپلوڈ نیٹ ورک ایرر (کوشش {attempt+1}/4): {e}")
+                        print(f"⚠️ اپلوڈ کے دوران پراکسی ایرر (کوشش {attempt+1}/4): {e}")
+                        
+                        print("⏳ یوٹیوب کی پروسیسنگ مکمل ہونے کے لیے 60 سیکنڈ کا انتظار کیا جا رہا ہے...")
+                        time.sleep(60) 
+                        
+                        try:
+                            print("🔍 یوٹیوب پر چیک کر رہے ہیں کہ کیا ویڈیو کامیابی سے اپلوڈ ہو چکی ہے...")
+                            temp_http = os.environ.pop('http_proxy', None)
+                            temp_https = os.environ.pop('https_proxy', None)
+                            
+                            check_req = youtube.search().list(part="snippet", forMine=True, q=final_title, maxResults=1)
+                            check_res = check_req.execute()
+                            
+                            if temp_http: os.environ['http_proxy'] = temp_http
+                            if temp_https: os.environ['https_proxy'] = temp_https
+
+                            if check_res.get('items') and check_res['items'][0]['snippet']['title'] == final_title:
+                                vid_id = check_res['items'][0]['id']['videoId']
+                                print(f"🎉 سمارٹ چیک پاس! پراکسی ایرر کے باوجود ویڈیو یوٹیوب پر مل گئی! ID: {vid_id}")
+                                
+                                if 'thumbnail' in item: enhance_and_upload_thumbnail(youtube, vid_id, item['thumbnail'])
+                                delete_from_drive(video_id)
+                                
+                                if item['filename'] not in history: history.append(item['filename'])
+                                with open('processed_history.json', 'w', encoding='utf-8') as f: json.dump(history, f, indent=4)
+                                mh = MediaFileUpload('processed_history.json')
+                                if history_file_id: drive_service.files().update(fileId=history_file_id, media_body=mh).execute()
+                                else: drive_service.files().create(body={'name':'processed_history.json','parents':[DRIVE_FOLDER_ID]}, media_body=mh).execute()
+                                
+                                upload_success = True
+                                break
+                        except Exception as check_e:
+                            print(f"⚠️ چیکنگ فیل ہوئی، نارمل ری ٹرائی جاری رہے گا: {check_e}")
+
                         if attempt == 3: raise e
                         time.sleep(10)
                 
@@ -350,9 +381,8 @@ def main():
             os.environ.pop('https_proxy', None)
             time.sleep(30)
 
-    # 🌟 نیا پراکسی ٹائم آؤٹ فکس (ڈپلیکیٹ اپلوڈ کو روکنے کے لیے)
     if not upload_success:
-        print("\n⚠️️ پراکسی کا کنکشن ڈراپ ہو گیا ہے۔ ڈپلیکیٹ اپلوڈ سے بچنے کے لیے ہم اسے دوبارہ Queue میں نہیں ڈالیں گے!")
+        print("\n⚠ تمام پراکسیز ٹرائی کرنے کے باوجود ویڈیو اپلوڈ نہیں ہو سکی۔")
         if item['filename'] not in history:
             history.append(item['filename'])
             with open('processed_history.json', 'w', encoding='utf-8') as f: 
@@ -372,4 +402,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-                                         
+                      
