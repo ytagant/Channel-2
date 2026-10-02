@@ -22,32 +22,64 @@ creds_drive = service_account.Credentials.from_service_account_file(
 )
 drive_service = build('drive', 'v3', credentials=creds_drive)
 
-def download_from_drive(file_id, output_path):
-    print(f"📥 ڈرائیو سے فائل {output_path} ڈاؤنلوڈ کی جا رہی ہے...")
+# 🌟 नया फंक्शन: अपलोड के बाद फाइल सेव करने के लिए फोल्डर बनाना या ढूंढना 🌟
+def get_or_create_success_folder():
+    query = f"name = 'Uploaded_Success' and mimeType = 'application/vnd.google-apps.folder' and '{DRIVE_FOLDER_ID}' in parents and trashed = false"
     for attempt in range(4):
         try:
-            request = drive_service.files().get_media(fileId=file_id)
-            with open(output_path, 'wb') as f:
-                f.write(request.execute())
-            print("✅ ڈاؤنلوڈ مکمل ہو گیا!")
-            return
+            results = drive_service.files().list(q=query, fields="files(id, name)").execute()
+            files = results.get('files', [])
+            if files:
+                return files[0]['id'] 
+            else:
+                folder_metadata = {
+                    'name': 'Uploaded_Success',
+                    'mimeType': 'application/vnd.google-apps.folder',
+                    'parents': [DRIVE_FOLDER_ID]
+                }
+                folder = drive_service.files().create(body=folder_metadata, fields='id').execute()
+                print("📁 नया 'Uploaded_Success' फोल्डर बना दिया गया है।")
+                return folder.get('id')
         except Exception as e:
-            print(f"⚠️ ڈاؤنلوڈ نیٹ ورک ایرر (کوشش {attempt+1}/4): {e}")
-            if attempt == 3: raise e
+            if attempt == 3: return None
             time.sleep(10)
 
-def delete_from_drive(file_id):
+# 🌟 नया फंक्शन: फाइल को डिलीट करने के बजाय फोल्डर में मूव करना 🌟
+def move_file_to_success_folder(file_id, success_folder_id):
+    if not success_folder_id: return
     for attempt in range(4):
         try:
-            drive_service.files().update(fileId=file_id, body={'trashed': True}).execute()
-            print(f"🗑️ فائل آئی ڈی {file_id} کو ڈرائیو کے ٹریش (Trash) میں منتقل کر دیا گیا ہے۔")
+            file = drive_service.files().get(fileId=file_id, fields='parents').execute()
+            previous_parents = ",".join(file.get('parents', []))
+            
+            drive_service.files().update(
+                fileId=file_id,
+                addParents=success_folder_id,
+                removeParents=previous_parents,
+                fields='id, parents'
+            ).execute()
+            print(f"📦 फाइल (ID: {file_id}) को 'Uploaded_Success' फोल्डर में मूव कर दिया गया है।")
             return
         except Exception as e:
             if attempt == 3: return
             time.sleep(10)
 
+def download_from_drive(file_id, output_path):
+    print(f"📥 गूगल ड्राइव से फाइल {output_path} डाउनलोड की जा रही है...")
+    for attempt in range(4):
+        try:
+            request = drive_service.files().get_media(fileId=file_id)
+            with open(output_path, 'wb') as f:
+                f.write(request.execute())
+            print("✅ डाउनलोड मुकम्मल हो गया!")
+            return
+        except Exception as e:
+            print(f"⚠️ डाउनलोड नेटवर्क एरर (कोशिश {attempt+1}/4): {e}")
+            if attempt == 3: raise e
+            time.sleep(10)
+
 def edit_anti_copyright_full_video(input_video, output_video):
-    print("🎬 مکمل ویڈیو پروسیسنگ: FFmpeg کے ذریعے اینٹی کاپی رائٹ فلٹرز لگائے جا رہے ہیں...")
+    print("🎬 मुकम्मल वीडियो प्रोसेसिंग: FFmpeg के ज़रिये एंटी-कॉपीराइट फिल्टर्स लगाए जा रहे हैं...")
     video_filter = (
         "crop=iw-2:ih-2:1:1,scale=iw:ih,"
         "eq=brightness=0.01:contrast=1.04:saturation=1.08,"
@@ -66,14 +98,14 @@ def edit_anti_copyright_full_video(input_video, output_video):
         output_video
     ]
     subprocess.run(cmd, check=True)
-    print("✨ مکمل ویڈیو کی اینٹی کاپی رائٹ ایڈیٹنگ مکمل ہو گئی!")
+    print("✨ मुकम्मल वीडियो की एंटी-कॉपीराइट एडिटिंग पूरी हो गई!")
 
-def enhance_and_upload_thumbnail(youtube, video_id, thumbnail_filename):
+def enhance_and_upload_thumbnail(youtube, video_id, thumbnail_filename, success_folder_id):
     t_id = get_file_id_by_name(thumbnail_filename)
     if not t_id: return
     download_from_drive(t_id, 'raw_thumb.jpg')
     
-    print("🎨 FFmpeg کے ذریعے تھمب نیل کو منفرد (Unique) بنایا جا رہا ہے...")
+    print("🎨 FFmpeg के ज़रिये थंबनेल को यूनिक (Unique) बनाया जा रहा है...")
     thumb_filter = "crop=iw*0.96:ih*0.96,scale=iw:ih,eq=brightness=0.02:contrast=1.08:saturation=1.1,noise=alls=2:allf=t+u,unsharp=3:3:0.5"
     cmd = [
         'ffmpeg', '-y',
@@ -84,17 +116,18 @@ def enhance_and_upload_thumbnail(youtube, video_id, thumbnail_filename):
     ]
     try:
         subprocess.run(cmd, check=True)
-        print("✨ تھمب نیل کامیابی سے منفرد ہو گیا!")
+        print("✨ थंबनेल कामयाबी से यूनिक हो गया!")
     except Exception as e:
-        print(f"⚠️ تھمب نیل ایڈیٹ کرنے میں ایرر، اصل تھمب نیل استعمال کیا جا رہا ہے: {e}")
+        print(f"⚠️ थंबनेल एडिट करने में एरर, असल थंबनेल इस्तेमाल किया जा रहा है: {e}")
         os.rename('raw_thumb.jpg', 'edited_thumb.jpg')
     
     for attempt in range(4):
         try:
             media = MediaFileUpload('edited_thumb.jpg', mimetype='image/jpeg')
             youtube.thumbnails().set(videoId=video_id, media_body=media).execute()
-            print("✅ ایڈیٹ شدہ تھمب نیل یوٹیوب پر اپلوڈ ہو گیا!")
-            delete_from_drive(t_id)
+            print("✅ एडिट किया गया थंबनेल YouTube पर अपलोड हो गया!")
+            # 🌟 थंबनेल को भी सक्सेस फोल्डर में मूव करना 🌟
+            if success_folder_id: move_file_to_success_folder(t_id, success_folder_id)
             return
         except Exception as e:
             if attempt == 3: return
@@ -114,7 +147,7 @@ def get_file_id_by_name(filename):
 def get_youtube_service():
     cs_id = get_file_id_by_name('client_secret.json')
     tk_id = get_file_id_by_name('token.json')
-    if not cs_id or not tk_id: raise Exception("❌ client_secret.json یا token.json ڈرائیو میں نہیں ملا!")
+    if not cs_id or not tk_id: raise Exception("❌ client_secret.json या token.json ड्राइव में नहीं मिला!")
     download_from_drive(cs_id, 'client_secret.json')
     download_from_drive(tk_id, 'token.json')
 
@@ -129,20 +162,19 @@ def get_youtube_service():
         client_secret=client_info['client_secret'], scopes=token_data.get('scopes')
     )
     
-    # آٹو ٹوکن ریفریش سسٹم
     if not creds_yt.valid:
         if creds_yt.expired and creds_yt.refresh_token:
             for attempt in range(4):
                 try:
                     creds_yt.refresh(Request())
-                    print("🔄 یوٹیوب کا ٹوکن ایکسپائر ہو گیا تھا، نیا ٹوکن جنریٹ کر لیا گیا ہے!")
+                    print("🔄 YouTube का टोकन एक्सपायर हो गया था, नया टोकन जनरेट कर लिया गया है!")
                     
                     token_data['token'] = creds_yt.token
                     with open('token.json', 'w') as f: json.dump(token_data, f)
                     
                     media = MediaFileUpload('token.json', mimetype='application/json')
                     drive_service.files().update(fileId=tk_id, media_body=media).execute()
-                    print("✅ نیا ٹوکن ڈرائیو پر اپڈیٹ کر دیا گیا ہے!")
+                    print("✅ नया टोकन ड्राइव पर अपडेट कर दिया गया है!")
                     break
                 except Exception as e:
                     if attempt == 3: raise e
@@ -151,17 +183,17 @@ def get_youtube_service():
     return build('youtube', 'v3', credentials=creds_yt)
 
 def get_strict_asian_proxies():
-    print("🔍 انٹرنیٹ سے صرف اعلیٰ کوالٹی کی ایشین پراکسیز (پاکستان، انڈیا، یو اے ای، بنگلہ دیش) تلاش کی جا رہی ہیں...")
+    print("🔍 इंटरनेट से सिर्फ आला क्वालिटी की एशियन प्रॉक्सी (भारत, पाकिस्तान, UAE, बांग्लादेश) तलाशी जा रही हैं...")
     url = "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=IN,PK,AE,BD&ssl=yes&anonymity=elite"
     try:
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             proxies = response.text.strip().split('\r\n')
             valid_proxies = [p for p in proxies if p]
-            print(f"✅ کل {len(valid_proxies)} ایشین پراکسیز مل گئیں!")
+            print(f"✅ कुल {len(valid_proxies)} एशियन प्रॉक्सी मिल गईं!")
             return valid_proxies
     except Exception as e:
-        print(f"⚠️ پراکسی تلاش کرنے میں ایرر: {e}")
+        print(f"⚠️ प्रॉक्सी तलाश करने में एरर: {e}")
     return []
 
 def verify_ip_cleanliness(proxy_ip):
@@ -174,15 +206,31 @@ def verify_ip_cleanliness(proxy_ip):
             if data.get("status") == "success":
                 valid_countries = ['IN', 'PK', 'AE', 'BD']
                 if data.get("countryCode") not in valid_countries:
-                    return False, f"بیرونی ملک/یورپین ({data.get('country')})"
+                    return False, f"बाहरी देश ({data.get('country')})"
                 if data.get("hosting") == True:
-                    return False, "ڈیٹا سینٹر/سپیم آئی پی"
+                    return False, "डेटा सेंटर/स्पैम IP"
                 return True, data.get("country")
     except:
         pass
-    return False, "چیک فیل (پراکسی ڈیڈ ہے)"
+    return False, "चेक फेल (प्रॉक्सी डेड है)"
+
+# 🌟 नया फंक्शन: चैनल की प्लेलिस्ट में तुरंत चेक करेगा (सर्च API का इंतज़ार नहीं करेगा) 🌟
+def check_if_video_uploaded(youtube, title):
+    try:
+        channel_req = youtube.channels().list(part="contentDetails", mine=True).execute()
+        uploads_playlist = channel_req['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+        
+        playlist_req = youtube.playlistItems().list(part="snippet", playlistId=uploads_playlist, maxResults=5).execute()
+        for vid_item in playlist_req.get('items', []):
+            if vid_item['snippet']['title'] == title:
+                return vid_item['snippet']['resourceId']['videoId']
+    except Exception as e:
+        print(f"⚠️ Playlist check error: {e}")
+    return None
 
 def main():
+    success_folder_id = get_or_create_success_folder()
+
     queue_file_id = get_file_id_by_name('queue.json')
     if not queue_file_id: return
     download_from_drive(queue_file_id, 'queue.json')
@@ -219,7 +267,7 @@ def main():
 
     if not item: return
 
-    print(f"🚀 پروسیسنگ شروع: {item['title']}")
+    print(f"\n🚀 प्रोसेसिंग शुरू: {item['title']}")
     video_id = get_file_id_by_name(item['filename'])
     download_from_drive(video_id, 'raw_video.mp4')
     
@@ -227,8 +275,7 @@ def main():
 
     final_title = f"{item['title']} \u200B"
     tags_list = item.get('tags', [])
-    if tags_list:
-        random.shuffle(tags_list)
+    if tags_list: random.shuffle(tags_list)
 
     original_desc = item.get('description', '')
     clean_desc = re.sub(r'http[s]?://\S+|www\.\S+', '', original_desc)
@@ -248,13 +295,13 @@ def main():
     orig_channel = item.get('uploader') or item.get('channel')
     
     if orig_channel and orig_url:
-        credit_section = f"\n\n🎥 ویڈیو کریڈٹ (Video Credit): {orig_channel}\n🔗 اصل لنک (Original): {orig_url}"
+        credit_section = f"\n\n🎥 वीडियो क्रेडिट (Video Credit): {orig_channel}\n🔗 असल लिंक (Original): {orig_url}"
     elif orig_channel:
-        credit_section = f"\n\n🎥 ویڈیو کریڈٹ (Video Credit): {orig_channel}"
+        credit_section = f"\n\n🎥 वीडियो क्रेडिट (Video Credit): {orig_channel}"
     elif orig_url:
-        credit_section = f"\n\n🎥 ویڈیو کریڈٹ (Video Credit): {orig_url}"
+        credit_section = f"\n\n🎥 वीडियो क्रेडिट (Video Credit): {orig_url}"
     else:
-        credit_section = "\n\n🎥 ویڈیو کریڈٹ (Credit): Respective Owner"
+        credit_section = "\n\n🎥 वीडियो क्रेडिट (Credit): Respective Owner"
 
     formatted_description = f"{clean_desc}\n\n{item.get('hashtags', '')}{credit_section}".strip()
     
@@ -272,117 +319,117 @@ def main():
     }
 
     upload_success = False
-    max_master_retries = 5  
+    max_master_retries = 3 # इसे 5 से 3 कर दिया है ताकि सर्वर ज़्यादा लोड न ले  
+    youtube = None
     
+    try:
+        youtube = get_youtube_service()
+    except Exception as e:
+        print(f"❌ YouTube ऑथेंटिकेशन फेल: {e}")
+        return
+
     for master_attempt in range(max_master_retries):
-        if upload_success:
-            break
+        if upload_success: break
             
-        print(f"\n🔄 پراکسی سرچ راؤنڈ {master_attempt + 1}/{max_master_retries} شروع...")
+        print(f"\n🔄 नेटवर्क/प्रॉक्सी राउंड {master_attempt + 1}/{max_master_retries} शुरू...")
         asian_proxies = get_strict_asian_proxies()
         if not asian_proxies:
-            print("⚠️ کوئی ایشین پراکسی نہیں ملی۔ ڈائریکٹ نیٹ ورک ٹرائی کر رہے ہیں...")
+            print("⚠️ कोई एशियन प्रॉक्सी नहीं मिली। डायरेक्ट नेटवर्क ट्राई कर रहे हैं...")
             asian_proxies = ['direct']
 
         for proxy in asian_proxies:
+            if upload_success: break
+
+            # 🌟 1. अपलोड से पहले सिक्योरिटी चेक 🌟
+            print("🔍 सिक्योरिटी चेक: चेक किया जा रहा है कि क्या वीडियो पहले से अपलोड हो चुकी है...")
+            vid_id = check_if_video_uploaded(youtube, final_title)
+            if vid_id:
+                print(f"✅ सुरक्षित रोक: यह वीडियो चैनल पर पहले से मौजूद है! (ID: {vid_id}) डुप्लीकेट को रोक दिया गया।")
+                upload_success = True
+                break
+
             country_info = ""
-            
             if proxy != 'direct':
                 is_clean, country_info = verify_ip_cleanliness(proxy)
                 if not is_clean:
-                    print(f"🚫 پراکسی مسترد کر دی گئی ({country_info}): {proxy}")
+                    print(f"🚫 प्रॉक्सी रिजेक्ट कर दी गई ({country_info}): {proxy}")
                     continue
                 
-                print(f"🌐 ٹیسٹ کی جا رہی ہے کلین ایشین پراکسی ({country_info}): {proxy}")
+                print(f"🌐 टेस्ट की जा रही है क्लीन एशियन प्रॉक्सी ({country_info}): {proxy}")
                 os.environ['http_proxy'] = f"http://{proxy}"
                 os.environ['https_proxy'] = f"http://{proxy}"
             else:
-                print("🌐 ڈائریکٹ اپلوڈ (بغیر پراکسی) ٹرائی کر رہے ہیں...")
+                print("🌐 डायरेक्ट अपलोड (बिना प्रॉक्सी) ट्राई कर रहे हैं...")
                 os.environ.pop('http_proxy', None)
                 os.environ.pop('https_proxy', None)
 
             try:
-                youtube = get_youtube_service()
                 media = MediaFileUpload('edited_video.mp4', chunksize=-1, resumable=True)
                 request = youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media)
                 
-                for attempt in range(4):
-                    try:
-                        response = request.execute()
-                        print(f"🎉 مکمل ویڈیو اپلوڈ ہو گئی! ID: {response['id']}")
-                        
-                        print("\n" + "="*60)
-                        if proxy != 'direct':
-                            print(f"🚀 SUCCESS LOG: یہ ویڈیو کامیابی کے ساتھ {proxy} ({country_info}) کے IP سے اپلوڈ ہو گئی ہے!")
-                        else:
-                            print(f"🚀 SUCCESS LOG: یہ ویڈیو کامیابی کے ساتھ ڈائریکٹ گٹ ہب آئی پی سے اپلوڈ ہو گئی ہے!")
-                        print("="*60 + "\n")
-                        
-                        if 'thumbnail' in item: 
-                            enhance_and_upload_thumbnail(youtube, response['id'], item['thumbnail'])
-                        delete_from_drive(video_id)
-                        
-                        if item['filename'] not in history: history.append(item['filename'])
-                        with open('processed_history.json', 'w', encoding='utf-8') as f: json.dump(history, f, indent=4)
-                        
-                        mh = MediaFileUpload('processed_history.json')
-                        if history_file_id: drive_service.files().update(fileId=history_file_id, media_body=mh).execute()
-                        else: drive_service.files().create(body={'name':'processed_history.json','parents':[DRIVE_FOLDER_ID]}, media_body=mh).execute()
-                        
+                # 🌟 2. अंधा लूप (range(4)) यहाँ से पूरी तरह हटा दिया गया है 🌟
+                try:
+                    response = request.execute()
+                    print(f"🎉 मुकम्मल वीडियो अपलोड हो गई! ID: {response['id']}")
+                    vid_id = response['id']
+                    
+                    print("\n" + "="*60)
+                    if proxy != 'direct':
+                        print(f"🚀 SUCCESS LOG: यह वीडियो कामयाबी के साथ {proxy} ({country_info}) के IP से अपलोड हो गई है!")
+                    else:
+                        print(f"🚀 SUCCESS LOG: यह वीडियो कामयाबी के साथ डायरेक्ट गिटहब IP से अपलोड हो गई है!")
+                    print("="*60 + "\n")
+                    
+                    upload_success = True
+                except Exception as e:
+                    print(f"⚠️ अपलोड के दौरान कनेक्शन टूटा (Error: {e})")
+                    
+                    # 🌟 3. नया अपडेट: 5 मिनट (300 सेकंड) का टाइमर 🌟
+                    print("⏳ प्रॉक्सी डिस्कनेक्ट हो गई! मुमकिन है आधी अपलोड के बाद वीडियो सर्वर पर चली गई हो।")
+                    print("🔍 स्मार्ट चेकिंग: YouTube प्रोसेसिंग के लिए 5 मिनट (300 सेकंड) का इंतज़ार किया जा रहा है...")
+                    time.sleep(300) 
+                    
+                    temp_http = os.environ.pop('http_proxy', None)
+                    temp_https = os.environ.pop('https_proxy', None)
+                    
+                    # 5 मिनट बाद चैनल की प्लेलिस्ट में चेक
+                    vid_id = check_if_video_uploaded(youtube, final_title)
+                    
+                    if temp_http: os.environ['http_proxy'] = temp_http
+                    if temp_https: os.environ['https_proxy'] = temp_https
+
+                    if vid_id:
+                        print(f"🎉 स्मार्ट चेक पास! प्रॉक्सी एरर के बावजूद वीडियो बैकग्राउंड में अपलोड हो चुकी थी! ID: {vid_id}")
                         upload_success = True
-                        break
-                    except Exception as e:
-                        print(f"⚠️ اپلوڈ کے دوران پراکسی ایرر (کوشش {attempt+1}/4): {e}")
-                        
-                        print("⏳ یوٹیوب کی پروسیسنگ مکمل ہونے کے لیے 60 سیکنڈ کا انتظار کیا جا رہا ہے...")
-                        time.sleep(60) 
-                        
-                        try:
-                            print("🔍 یوٹیوب پر چیک کر رہے ہیں کہ کیا ویڈیو کامیابی سے اپلوڈ ہو چکی ہے...")
-                            temp_http = os.environ.pop('http_proxy', None)
-                            temp_https = os.environ.pop('https_proxy', None)
-                            
-                            check_req = youtube.search().list(part="snippet", forMine=True, q=final_title, maxResults=1)
-                            check_res = check_req.execute()
-                            
-                            if temp_http: os.environ['http_proxy'] = temp_http
-                            if temp_https: os.environ['https_proxy'] = temp_https
+                    else:
+                        print("⚠ 5 मिनट इंतज़ार के बाद भी चैनल पर वीडियो नहीं मिली। अब अगली प्रॉक्सी से दोबारा अपलोड शुरू किया जाएगा।")
 
-                            if check_res.get('items') and check_res['items'][0]['snippet']['title'] == final_title:
-                                vid_id = check_res['items'][0]['id']['videoId']
-                                print(f"🎉 سمارٹ چیک پاس! پراکسی ایرر کے باوجود ویڈیو یوٹیوب پر مل گئی! ID: {vid_id}")
-                                
-                                if 'thumbnail' in item: enhance_and_upload_thumbnail(youtube, vid_id, item['thumbnail'])
-                                delete_from_drive(video_id)
-                                
-                                if item['filename'] not in history: history.append(item['filename'])
-                                with open('processed_history.json', 'w', encoding='utf-8') as f: json.dump(history, f, indent=4)
-                                mh = MediaFileUpload('processed_history.json')
-                                if history_file_id: drive_service.files().update(fileId=history_file_id, media_body=mh).execute()
-                                else: drive_service.files().create(body={'name':'processed_history.json','parents':[DRIVE_FOLDER_ID]}, media_body=mh).execute()
-                                
-                                upload_success = True
-                                break
-                        except Exception as check_e:
-                            print(f"⚠️ چیکنگ فیل ہوئی، نارمل ری ٹرائی جاری رہے گا: {check_e}")
-
-                        if attempt == 3: raise e
-                        time.sleep(10)
-                
                 if upload_success:
-                    break
+                    if 'thumbnail' in item: 
+                        enhance_and_upload_thumbnail(youtube, vid_id, item['thumbnail'], success_folder_id)
+                    
+                    # 🌟 4. कामयाबी की सूरत में वीडियो को डिलीट करने के बजाय मूव करें 🌟
+                    if success_folder_id: move_file_to_success_folder(video_id, success_folder_id)
+                    
+                    if item['filename'] not in history: history.append(item['filename'])
+                    with open('processed_history.json', 'w', encoding='utf-8') as f: json.dump(history, f, indent=4)
+                    mh = MediaFileUpload('processed_history.json')
+                    if history_file_id: drive_service.files().update(fileId=history_file_id, media_body=mh).execute()
+                    else: drive_service.files().create(body={'name':'processed_history.json','parents':[DRIVE_FOLDER_ID]}, media_body=mh).execute()
+                    
+                    break # प्रॉक्सी लूप ब्रेक कर दें
                     
             except Exception as e:
-                print(f"❌ پراکسی {proxy} فیل ہو گئی: {e} | اگلی ٹرائی کر رہے ہیں...")
+                print(f"❌ प्रॉक्सी {proxy} फेल हो गई: {e} | अगली ट्राई कर रहे हैं...")
                 
         if not upload_success:
-            print("⏳ تمام پراکسیز فیل ہو گئیں۔ 30 سیکنڈ انتظار کے بعد انٹرنیٹ سے نئی پراکسیز تلاش کی جائیں گی...")
+            print("⏳ तमाम प्रॉक्सी फेल हो गईं। 15 सेकंड इंतज़ार के बाद इंटरनेट से नई प्रॉक्सी तलाशी जाएंगी...")
             os.environ.pop('http_proxy', None)
             os.environ.pop('https_proxy', None)
-            time.sleep(30)
+            time.sleep(15)
 
     if not upload_success:
-        print("\n⚠ تمام پراکسیز ٹرائی کرنے کے باوجود ویڈیو اپلوڈ نہیں ہو سکی۔")
+        print("\n⚠ तमाम प्रॉक्सी ट्राई करने के बावजूद वीडियो अपलोड नहीं हो सकी।")
         if item['filename'] not in history:
             history.append(item['filename'])
             with open('processed_history.json', 'w', encoding='utf-8') as f: 
@@ -392,7 +439,6 @@ def main():
                 drive_service.files().update(fileId=history_file_id, media_body=mh).execute()
             else:
                 drive_service.files().create(body={'name':'processed_history.json','parents':[DRIVE_FOLDER_ID]}, media_body=mh).execute()
-        delete_from_drive(video_id)
 
     os.environ.pop('http_proxy', None)
     os.environ.pop('https_proxy', None)
@@ -402,4 +448,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-                      
